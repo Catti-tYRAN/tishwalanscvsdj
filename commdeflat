@@ -1,0 +1,69 @@
+PS D:\TWLan-win32\htdocs> Get-ChildItem -Recurse -Filter "*.php" | Select-String "Twlan\\|new Twlan|runWorld|handleEvents|->run\(\)" | Select-Object Path, Line
+
+Path                                                                                  Line
+----                                                                                  ----
+D:\TWLan-win32\htdocs\eventsystem_standalone.php                                      // Reconstruido desde zim_TWLa...
+D:\TWLan-win32\htdocs\eventsystem_standalone.php                                      function handleEvents($db) {
+D:\TWLan-win32\htdocs\eventsystem_standalone.php                                      // Reconstruido desde zim_TWLa...
+D:\TWLan-win32\htdocs\eventsystem_standalone.php                                              handleEvents($db);
+D:\TWLan-win32\htdocs\templates\adminer.php                                                   $cfg = \TWLan\TWLan::$...
+D:\TWLan-win32\htdocs\templates\adminer.php                                                   return $server.':'.\TW...
+D:\TWLan-win32\htdocs\templates\layouts\game.php                                      use TWLan\framework\Router;
+D:\TWLan-win32\htdocs\templates\layouts\game.php                                      use TWLan\framework\Text;
+D:\TWLan-win32\htdocs\templates\layouts\game.php                                      use TWLan\Model\World\Event\Ar...
+D:\TWLan-win32\htdocs\templates\layouts\game.php                                      use TWLan\ORM\Condition;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\admin\world\players.php             use TWLan\Framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\admin\world\players\delete.php      use TWLan\Framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\res.php                            use Twlan\framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\ally\allyindex.php                                           ...
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\ally\diplomaty.php             use TWLan\Model\World\Ally\Con...
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\ally\members.php               use TWLan\framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\ally\members.php               use TWLan\Model\World\Ally\Per...
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\ally\members_rights.php        use \TWLan\Model\World\Ally\Pe...
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\ally\profile.php               use TWLan\framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\groups\popup.php               use TWLan\Framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\hide\index.php                     use Twlan\framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\main\build.php                 use Twlan\framework\Time;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\main\destroy.php               use Twlan\framework\Time;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\main\index.php                 use Twlan\framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\main\queue.php                 use Twlan\framework\Time;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\overview\buildqueue.php        use Twlan\framework\Time;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\overview\groups.php            use TWLan\Framework\Router;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\overview\incomingUnits.php     use Twlan\framework\Time;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\overview\newbie.php            use Twlan\framework\Time;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\overview\outgoingUnits.php     use Twlan\framework\Time;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\overview\prod.php              use Twlan\framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\overview\summary_classical.php use Twlan\framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\overview\summary_visual.php    use Twlan\framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\overviewvillages\combined.php  use Twlan\framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\overviewvillages\groups.php    use Twlan\framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\overviewvillages\header.php    use Twlan\framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\place\command_confirm.php      use Twlan\framework\Time;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\place\command_confirm.php      use Twlan\framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\ranking\ally.php               use TWLan\Framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\ranking\ally.php               use TWLan\Controllers\Game\Ran...
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\ranking\navi.php               use \TWLan\Framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\ranking\player.php             use TWLan\Framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\ranking\player.php             use TWLan\Controllers\Game\Ran...
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\report\overview.php            use Twlan\framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\report\overview.php            use Twlan\framework\Time;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\report\view_attack.php         use Twlan\framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\report\view_attack.php         use Twlan\framework\Time;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\report\view_support.php        use Twlan\framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\report\view_support.php        use Twlan\framework\Time;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\smith\index.php                use Twlan\framework\Router;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\smith\main.php                 use Twlan\framework\Time;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\smith\queue.php                use Twlan\framework\Time;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\snob\coin_coin.php             use Twlan\framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\snob\coin_queue.php            use Twlan\framework\Time;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\snob\coin_train.php            use Twlan\framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\snob\coin_train.php            use Twlan\framework\Time;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\statue\index.php               use Twlan\framework\Time;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\storage\index.php                  use Twlan\framework\Text;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\storage\index.php                  use Twlan\framework\Time;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\train\queue.php                use Twlan\framework\Time;
+D:\TWLan-win32\htdocs\templates\twlan\controllers\game\train\train.php                use Twlan\framework\Time;
+
+
+PS D:\TWLan-win32\htdocs> Get-ChildItem -Recurse -Filter "*.php" | Select-String "tick\|cron\|event" | Select-Object Path, Line
+PS D:\TWLan-win32\htdocs>
