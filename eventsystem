@@ -1,0 +1,455 @@
+<?php
+/**
+ * TWLan EventSystem — Reescrito en PHP puro
+ * Usa el ORM propio, sin dependencia de php5.dll
+ *
+ * Uso: php eventsystem.php
+ */
+
+require_once __DIR__ . '/bootstrap.php';
+
+define('TICK_SLEEP_MS', 500000);   // 0.5 segundos
+define('RANKS_EVERY_TICKS', 142);  // igual que el original (0x8e)
+define('WORLD', 'world');
+
+// ============================================================
+// INICIALIZACIÓN
+// ============================================================
+
+echo "[TWLan EventSystem - PHP Puro]\n";
+echo "Iniciando...\n";
+
+try {
+    bootstrapORM(__DIR__ . '/config/app.json');
+    \TWLan\ORM\Entity::setWorld(WORLD);
+    $db = \TWLan\ORM\Lemon::db();
+    echo "[OK] Conectado a MySQL\n";
+} catch (Exception $e) {
+    die("[ERROR] " . $e->getMessage() . "\n");
+}
+
+// Crear PID file
+$pidFile = __DIR__ . '/eventsystem.pid';
+file_put_contents($pidFile, getmypid());
+register_shutdown_function(function() use ($pidFile) {
+    if (file_exists($pidFile)) unlink($pidFile);
+});
+
+echo "[OK] Procesando mundo '" . WORLD . "'\n";
+echo "Presiona Ctrl+C para detener.\n\n";
+
+// ============================================================
+// HANDLERS DE EVENTOS
+// ============================================================
+
+/**
+ * Procesa un evento de construcción.
+ * Reconstruido desde zim_Twlan_Model_World_Event_Build_handle
+ */
+function handleBuildEvent($db, $event) {
+    try {
+        $db->beginTransaction();
+
+        $stmt = $db->prepare("SELECT * FROM world_village WHERE id_village = ?");
+        $stmt->execute(array($event['id_village_to']));
+        $village = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$village) {
+            deleteEvent($db, $event['id_event']);
+            $db->commit();
+            return;
+        }
+
+        $building = 'building_' . $event['building'];
+        $destroy  = (bool)$event['destroy'];
+        $current  = isset($village[$building]) ? (int)$village[$building] : 0;
+        $newLevel = $destroy ? max(0, $current - 1) : $current + 1;
+
+        $db->prepare("UPDATE world_village SET `{$building}` = ? WHERE id_village = ?")
+           ->execute(array($newLevel, $event['id_village_to']));
+
+        $db->prepare("DELETE FROM world_event_build WHERE id_event = ?")
+           ->execute(array($event['id_event']));
+        deleteEvent($db, $event['id_event']);
+
+        $db->commit();
+        echo "[BUILD] Aldea {$event['id_village_to']}: {$event['building']} → nivel {$newLevel}\n";
+
+    } catch (Exception $e) {
+        $db->rollBack();
+        echo "[ERROR] handleBuildEvent: " . $e->getMessage() . "\n";
+    }
+}
+
+/**
+ * Procesa un evento de entrenamiento.
+ * Reconstruido desde zim_Twlan_Model_World_Event_Train_handle
+ */
+function handleTrainEvent($db, $event) {
+    try {
+        $db->beginTransaction();
+
+        $unit   = $event['unit'];
+        $amount = (int)$event['amount'];
+
+        // Agregar unidades al ejército de la aldea
+        $stmt = $db->prepare("
+            SELECT id_army FROM world_unit
+            WHERE id_village_from = ? AND id_village_to = ?
+        ");
+        $stmt->execute(array($event['id_village_to'], $event['id_village_to']));
+        $army = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($army) {
+            $db->prepare("UPDATE world_unit SET `unit_{$unit}` = `unit_{$unit}` + ? WHERE id_army = ?")
+               ->execute(array($amount, $army['id_army']));
+        } else {
+            $db->prepare("INSERT INTO world_unit (id_village_from, id_village_to, `unit_{$unit}`) VALUES (?, ?, ?)")
+               ->execute(array($event['id_village_to'], $event['id_village_to'], $amount));
+        }
+
+        $db->prepare("DELETE FROM world_event_train WHERE id_event = ?")
+           ->execute(array($event['id_event']));
+        deleteEvent($db, $event['id_event']);
+
+        $db->commit();
+        echo "[TRAIN] Aldea {$event['id_village_to']}: +{$amount} {$unit}\n";
+
+    } catch (Exception $e) {
+        $db->rollBack();
+        echo "[ERROR] handleTrainEvent: " . $e->getMessage() . "\n";
+    }
+}
+
+/**
+ * Procesa un evento de investigación.
+ * Reconstruido desde zim_Twlan_Model_World_Event_Research_handle
+ */
+function handleResearchEvent($db, $event) {
+    try {
+        $db->beginTransaction();
+
+        $stmt = $db->prepare("SELECT * FROM world_event_research WHERE id_event = ?");
+        $stmt->execute(array($event['id_event']));
+        $research = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($research) {
+            $unit  = $research['unit'];
+            $field = 'research_' . $unit;
+            $db->prepare("UPDATE world_village SET `{$field}` = 1 WHERE id_village = ?")
+               ->execute(array($event['id_village_to']));
+
+            $db->prepare("DELETE FROM world_event_research WHERE id_event = ?")
+               ->execute(array($event['id_event']));
+        }
+
+        deleteEvent($db, $event['id_event']);
+        $db->commit();
+
+        if ($research) {
+            echo "[RESEARCH] Aldea {$event['id_village_to']}: {$research['unit']} investigado\n";
+        }
+
+    } catch (Exception $e) {
+        $db->rollBack();
+        echo "[ERROR] handleResearchEvent: " . $e->getMessage() . "\n";
+    }
+}
+
+/**
+ * Procesa un evento de ejército.
+ * Reconstruido desde zim_Twlan_Model_World_Event_Army_handle
+ */
+function handleArmyEvent($db, $event) {
+    try {
+        $db->beginTransaction();
+
+        $movementType = (int)$event['movement_type'];
+        $fromVillage  = (int)$event['id_village_from'];
+        $toVillage    = (int)$event['id_village_to'];
+        
+        // Decodificar el campo data si existe
+        $eventData = !empty($event['data']) ? json_decode($event['data'], true) : array();
+
+        switch ($movementType) {
+            case 0: // Ataque - crear evento de retorno
+                handleReturn($db, $event, $eventData);
+                break;
+            
+            case 2: // Apoyo - agregar tropas a aldea destino
+                addUnitsToVillage($db, $event, $toVillage);
+                break;
+            
+            case 3: // Retorno - devolver tropas supervivientes a aldea origen
+                addUnitsToVillage($db, $event, $fromVillage);
+                
+                // Si hay info de saqueo en data, mostrarla
+                if (isset($eventData['loot'])) {
+                    $loot = $eventData['loot'];
+                    echo "[RETURN] Aldea {$fromVillage}: Recursos saqueados: {$loot['used']}/{$loot['max']}\n";
+                }
+                break;
+            
+            case 4: // Espionaje - crear evento de retorno
+                handleReturn($db, $event, $eventData);
+                break;
+            
+            default:
+                echo "[WARN] Tipo de movimiento desconocido: {$movementType}\n";
+        }
+
+        $db->prepare("DELETE FROM world_event_army WHERE id_event = ?")
+           ->execute(array($event['id_event']));
+        deleteEvent($db, $event['id_event']);
+        $db->commit();
+
+    } catch (Exception $e) {
+        $db->rollBack();
+        echo "[ERROR] handleArmyEvent: " . $e->getMessage() . "\n";
+    }
+}
+
+/**
+ * Agrega unidades de un evento a una aldea en world_unit.
+ * 
+ * Las tropas están en los campos unit_spear, unit_sword, etc. del evento.
+ */
+function addUnitsToVillage($db, $event, $idVillage) {
+    $units = array('spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 
+                   'heavy', 'ram', 'catapult', 'knight', 'snob');
+
+    // Buscar si ya existe un ejército en esa aldea
+    $stmt = $db->prepare("
+        SELECT id_army FROM world_unit 
+        WHERE id_village_from = ? AND id_village_to = ?
+    ");
+    $stmt->execute(array($idVillage, $idVillage));
+    $army = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    // Contar tropas totales a devolver
+    $totalUnits = 0;
+    foreach ($units as $unit) {
+        $field = 'unit_' . $unit;
+        $totalUnits += isset($event[$field]) ? (int)$event[$field] : 0;
+    }
+
+    if ($totalUnits === 0) {
+        echo "[RETURN] Aldea {$idVillage}: Sin tropas supervivientes\n";
+        return;
+    }
+
+    if ($army) {
+        // Actualizar ejército existente
+        $sets = array();
+        $params = array();
+        
+        foreach ($units as $unit) {
+            $field = 'unit_' . $unit;
+            $amount = isset($event[$field]) ? (int)$event[$field] : 0;
+            
+            if ($amount > 0) {
+                $sets[] = "`{$field}` = `{$field}` + ?";
+                $params[] = $amount;
+            }
+        }
+        
+        if (!empty($sets)) {
+            $params[] = $army['id_army'];
+            $db->prepare("UPDATE world_unit SET " . implode(', ', $sets) . " WHERE id_army = ?")
+               ->execute($params);
+        }
+        
+        echo "[RETURN] Aldea {$idVillage}: +{$totalUnits} tropas (actualizado)\n";
+        
+    } else {
+        // Crear nuevo registro de ejército
+        $cols = array('id_village_from', 'id_village_to');
+        $vals = array($idVillage, $idVillage);
+        
+        foreach ($units as $unit) {
+            $field = 'unit_' . $unit;
+            $cols[] = $field;
+            $vals[] = isset($event[$field]) ? (int)$event[$field] : 0;
+        }
+        
+        $placeholders = implode(', ', array_fill(0, count($vals), '?'));
+        $colStr = '`' . implode('`, `', $cols) . '`';
+        
+        $db->prepare("INSERT INTO world_unit ({$colStr}) VALUES ({$placeholders})")
+           ->execute($vals);
+        
+        echo "[RETURN] Aldea {$idVillage}: +{$totalUnits} tropas (nuevo ejército)\n";
+    }
+}
+
+/**
+ * Crea evento de retorno para tropas atacantes.
+ * 
+ * El evento original contiene las tropas que SALIERON.
+ * El juego debe crear un nuevo evento con las tropas SUPERVIVIENTES después del combate.
+ * 
+ * NOTA: Esta función crea el evento de retorno con las tropas del evento original.
+ * La lógica completa de combate requeriría llamar a dofight() y usar attackingArmy.after
+ */
+function handleReturn($db, $event, $eventData = array()) {
+    $now = microtime(true);
+    $duration = $event['finish'] - $event['start'];
+    $returnTime = $now + $duration;
+
+    // Crear evento base de retorno
+    $stmt = $db->prepare("
+        INSERT INTO world_event (event_type, finish, start, id_village_to)
+        VALUES (3, ?, ?, ?)
+    ");
+    $stmt->execute(array($returnTime, $now, $event['id_village_from']));
+    
+    $newEventId = $db->lastInsertId();
+
+    // Crear evento de ejército con las tropas
+    $units = array('spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher',
+                   'heavy', 'ram', 'catapult', 'knight', 'snob');
+    
+    $cols = array('id_event', 'id_village_from', 'id_village_to', 'movement_type');
+    $vals = array($newEventId, $event['id_village_from'], $event['id_village_from'], 3);
+    
+    foreach ($units as $unit) {
+        $field = 'unit_' . $unit;
+        $cols[] = $field;
+        // IMPORTANTE: Aquí deberían ir las tropas supervivientes del combate
+        // Por ahora, copiamos las tropas del evento original
+        $vals[] = isset($event[$field]) ? (int)$event[$field] : 0;
+    }
+    
+    // Si hay datos de combate/saqueo, guardarlos en el campo data
+    $cols[] = 'data';
+    $vals[] = !empty($eventData) ? json_encode($eventData) : null;
+    
+    $placeholders = implode(', ', array_fill(0, count($vals), '?'));
+    $colStr = '`' . implode('`, `', $cols) . '`';
+    
+    $stmt = $db->prepare("INSERT INTO world_event_army ({$colStr}) VALUES ({$placeholders})");
+    $stmt->execute($vals);
+    
+    $finishDate = date('Y-m-d H:i:s', (int)$returnTime);
+    echo "[ATTACK] Creado evento de retorno #{$newEventId} → Aldea {$event['id_village_from']} (arriba: {$finishDate})\n";
+}
+
+/**
+ * Elimina un evento de la tabla base.
+ */
+function deleteEvent($db, $idEvent) {
+    $db->prepare("DELETE FROM world_event WHERE id_event = ?")
+       ->execute(array($idEvent));
+}
+
+// ============================================================
+// HANDLE EVENTS — procesa todos los eventos vencidos
+// ============================================================
+
+function handleEvents($db) {
+    $now = microtime(true);
+
+    // Construcciones
+    $stmt = $db->prepare("
+        SELECT e.*, eb.building, eb.destroy
+        FROM world_event e
+        INNER JOIN world_event_build eb ON eb.id_event = e.id_event
+        WHERE e.finish <= ? ORDER BY e.finish ASC
+    ");
+    $stmt->execute(array($now));
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $event) {
+        handleBuildEvent($db, $event);
+    }
+
+    // Entrenamientos
+    $stmt = $db->prepare("
+        SELECT e.*, et.unit, et.amount, et.decommission
+        FROM world_event e
+        INNER JOIN world_event_train et ON et.id_event = e.id_event
+        WHERE e.finish <= ? ORDER BY e.finish ASC
+    ");
+    $stmt->execute(array($now));
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $event) {
+        handleTrainEvent($db, $event);
+    }
+
+    // Investigaciones
+    $stmt = $db->prepare("
+        SELECT e.*
+        FROM world_event e
+        INNER JOIN world_event_research er ON er.id_event = e.id_event
+        WHERE e.finish <= ? ORDER BY e.finish ASC
+    ");
+    $stmt->execute(array($now));
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $event) {
+        handleResearchEvent($db, $event);
+    }
+
+    // Ejércitos
+    $stmt = $db->prepare("
+        SELECT e.*, ea.*
+        FROM world_event e
+        INNER JOIN world_event_army ea ON ea.id_event = e.id_event
+        WHERE e.finish <= ? ORDER BY e.finish ASC
+    ");
+    $stmt->execute(array($now));
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $event) {
+        handleArmyEvent($db, $event);
+    }
+}
+
+// ============================================================
+// UPDATE RANKS
+// Reconstruido desde zim_TWLan_EventSystem_updateRanks
+// ============================================================
+
+function updateRanks($db) {
+    try {
+        $db->exec("
+            UPDATE world_user SET
+                cached_points = (
+                    SELECT COALESCE(SUM(points), 0)
+                    FROM world_village
+                    WHERE id_user_owner = world_user.id_user
+                ),
+                cached_villages = (
+                    SELECT COUNT(*)
+                    FROM world_village
+                    WHERE id_user_owner = world_user.id_user
+                )
+        ");
+        echo "[RANKS] Rankings actualizados\n";
+    } catch (Exception $e) {
+        echo "[ERROR] updateRanks: " . $e->getMessage() . "\n";
+    }
+}
+
+// ============================================================
+// LOOP PRINCIPAL
+// ============================================================
+
+$tick = 0;
+
+while (true) {
+    $tick++;
+
+    try {
+        handleEvents($db);
+
+        if ($tick % RANKS_EVERY_TICKS === 0) {
+            updateRanks($db);
+            $tick = 0;
+        }
+    } catch (Exception $e) {
+        echo "[ERROR] Loop: " . $e->getMessage() . "\n";
+        // Reconectar si se perdió la conexión
+        try {
+            \TWLan\ORM\Lemon::disconnect();
+            $db = \TWLan\ORM\Lemon::db();
+        } catch (Exception $e2) {
+            echo "[ERROR] Reconexión fallida: " . $e2->getMessage() . "\n";
+        }
+    }
+
+    usleep(TICK_SLEEP_MS);
+}
