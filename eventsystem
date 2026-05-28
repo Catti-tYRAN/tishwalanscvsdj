@@ -39,12 +39,273 @@ echo "[OK] Procesando mundo '" . WORLD . "'\n";
 echo "Presiona Ctrl+C para detener.\n\n";
 
 // ============================================================
+// CONSTANTES DE UNIDADES
+// ============================================================
+
+/**
+ * Lista de unidades del juego (orden consistente en todo el sistema)
+ */
+function getUnitList() {
+    return array('spear', 'sword', 'axe', 'archer', 'spy', 'light',
+                 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob');
+}
+
+/**
+ * Estadísticas de cada unidad:
+ *   attack     = poder ofensivo
+ *   def_inf    = defensa contra infantería
+ *   def_cav    = defensa contra caballería
+ *   haul       = capacidad de carga (recursos)
+ *
+ * Basado en los valores estándar de Tribal Wars que TWLan replica.
+ */
+function getUnitStats() {
+    return array(
+        'spear'    => array('attack' => 10,  'def_inf' => 15,  'def_cav' => 45,  'haul' => 25),
+        'sword'    => array('attack' => 25,  'def_inf' => 50,  'def_cav' => 25,  'haul' => 15),
+        'axe'      => array('attack' => 40,  'def_inf' => 10,  'def_cav' => 5,   'haul' => 10),
+        'archer'   => array('attack' => 15,  'def_inf' => 50,  'def_cav' => 40,  'haul' => 10),
+        'spy'      => array('attack' => 0,   'def_inf' => 2,   'def_cav' => 1,   'haul' => 0),
+        'light'    => array('attack' => 130, 'def_inf' => 30,  'def_cav' => 80,  'haul' => 80),
+        'marcher'  => array('attack' => 120, 'def_inf' => 40,  'def_cav' => 30,  'haul' => 50),
+        'heavy'    => array('attack' => 150, 'def_inf' => 100, 'def_cav' => 50,  'haul' => 50),
+        'ram'      => array('attack' => 2,   'def_inf' => 20,  'def_cav' => 5,   'haul' => 0),
+        'catapult' => array('attack' => 100, 'def_inf' => 50,  'def_cav' => 50,  'haul' => 0),
+        'knight'   => array('attack' => 150, 'def_inf' => 250, 'def_cav' => 400, 'haul' => 100),
+        'snob'     => array('attack' => 30,  'def_inf' => 100, 'def_cav' => 50,  'haul' => 0),
+    );
+}
+
+// ============================================================
+// COMBATE: dofight()
+// ============================================================
+
+/**
+ * Calcula el resultado del combate entre un ejército atacante y uno defensor.
+ *
+ * FÓRMULA:
+ *   1. poder_ataque = sum(unidades * stats.attack)
+ *   2. ratio_caballería = unidades_cav / total_unidades_ataque
+ *   3. poder_defensa = sum(unidades * (ratio_inf*def_inf + ratio_cav*def_cav)) * factor_muro
+ *   4. factor_muro = 1.037^nivel_muro  (nivel 20 ≈ x2.07)
+ *   5. suerte = aleatorio entre -12.5% y +12.5%
+ *   6. ataque_modificado = poder_ataque * (1 + suerte)
+ *   7. Ganador: quien tiene mayor poder
+ *   8. Supervivientes del ganador = original * (ganador / (ganador + perdedor))^1.5
+ *   9. El bando perdedor pierde TODAS sus tropas
+ *
+ * @param array $attackingArmy  Ejército atacante: array('spear' => N, 'sword' => N, ...)
+ * @param array $defendingArmy  Ejército defensor: array('spear' => N, 'sword' => N, ...)
+ * @param int   $wallLevel      Nivel del muro (0-20)
+ * @param float $luck           Suerte forzada (-0.125 a 0.125), null = aleatorio
+ *
+ * @return array Resultado:
+ *   - attacker_wins  (bool)
+ *   - luck           (float)  valor de suerte aplicado
+ *   - attack_power   (float)  poder de ataque final (con suerte)
+ *   - defense_power  (float)  poder de defensa final (con muro)
+ *   - wall_factor    (float)  multiplicador del muro
+ *   - attacking      array con 'before' y 'after' (tropas antes/después)
+ *   - defending      array con 'before' y 'after' (tropas antes/después)
+ */
+function dofight($attackingArmy, $defendingArmy, $wallLevel = 0, $luck = null) {
+    $unitStats    = getUnitStats();
+    $units        = getUnitList();
+    $cavalryUnits = array('light', 'marcher', 'heavy');
+
+    // --- Normalizar ejércitos ---
+    foreach ($units as $unit) {
+        $attackingArmy[$unit] = isset($attackingArmy[$unit]) ? max(0, (int)$attackingArmy[$unit]) : 0;
+        $defendingArmy[$unit] = isset($defendingArmy[$unit]) ? max(0, (int)$defendingArmy[$unit]) : 0;
+    }
+
+    // --- Calcular poder de ataque y ratio caballería/infantería ---
+    $totalAttackPower  = 0;
+    $totalAttackUnits  = 0;
+    $totalCavalryUnits = 0;
+
+    foreach ($units as $unit) {
+        $count = $attackingArmy[$unit];
+        $totalAttackPower  += $count * $unitStats[$unit]['attack'];
+        $totalAttackUnits  += $count;
+        if (in_array($unit, $cavalryUnits)) {
+            $totalCavalryUnits += $count;
+        }
+    }
+
+    $cavalryRatio  = ($totalAttackUnits > 0) ? ($totalCavalryUnits / $totalAttackUnits) : 0.0;
+    $infantryRatio = 1.0 - $cavalryRatio;
+
+    // --- Factor de muro: 1.037^nivel (nivel 20 ≈ ×2.07, equivalente al original TW) ---
+    $wallLevel   = max(0, min(20, (int)$wallLevel));
+    $wallFactor  = pow(1.037, $wallLevel);
+
+    // --- Calcular poder de defensa (con muro) ---
+    $totalDefensePower = 0.0;
+    foreach ($units as $unit) {
+        $count    = $defendingArmy[$unit];
+        $defValue = ($infantryRatio * $unitStats[$unit]['def_inf'])
+                  + ($cavalryRatio  * $unitStats[$unit]['def_cav']);
+        $totalDefensePower += $count * $defValue;
+    }
+    $totalDefensePower *= $wallFactor;
+
+    // --- Suerte: -12.5% a +12.5% ---
+    if ($luck === null) {
+        $luck = (mt_rand(0, 250) - 125) / 1000.0;
+    }
+    $modifiedAttack = $totalAttackPower * (1.0 + $luck);
+
+    // --- Determinar ganador y calcular supervivientes ---
+    //
+    // Fórmula de supervivientes del bando ganador:
+    //   fraction = (poder_ganador / (poder_ganador + poder_perdedor)) ^ 1.5
+    //
+    // El exponent 1.5 produce resultados realistas:
+    //   - Pelea pareja (1:1)  → ~35% del ganador sobrevive
+    //   - Ventaja doble (2:1) → ~54% sobrevive
+    //   - Ventaja cuádruple   → ~71% sobrevive
+    //
+    // El bando PERDEDOR pierde el 100% de sus tropas.
+    //
+
+    $attackerWins  = ($modifiedAttack >= $totalDefensePower);
+    $attackingAfter = array();
+    $defendingAfter = array();
+
+    if ($modifiedAttack <= 0 && $totalDefensePower <= 0) {
+        // Aldea vacía atacada sin tropas → sin combate
+        $attackingAfter = $attackingArmy;
+        $defendingAfter = $defendingArmy;
+
+    } elseif ($attackerWins) {
+        if ($totalDefensePower <= 0) {
+            $survivorFraction = 1.0; // Sin defensores → todos los atacantes sobreviven
+        } else {
+            $survivorFraction = pow(
+                $modifiedAttack / ($modifiedAttack + $totalDefensePower),
+                1.5
+            );
+        }
+        foreach ($units as $unit) {
+            $attackingAfter[$unit] = (int)floor($attackingArmy[$unit] * $survivorFraction);
+            $defendingAfter[$unit] = 0;
+        }
+
+    } else {
+        // Defensor gana
+        if ($modifiedAttack <= 0) {
+            $survivorFraction = 1.0;
+        } else {
+            $survivorFraction = pow(
+                $totalDefensePower / ($modifiedAttack + $totalDefensePower),
+                1.5
+            );
+        }
+        foreach ($units as $unit) {
+            $attackingAfter[$unit] = 0;
+            $defendingAfter[$unit] = (int)floor($defendingArmy[$unit] * $survivorFraction);
+        }
+    }
+
+    return array(
+        'attacker_wins'  => $attackerWins,
+        'luck'           => $luck,
+        'attack_power'   => $modifiedAttack,
+        'defense_power'  => $totalDefensePower,
+        'wall_factor'    => $wallFactor,
+        'attacking'      => array('before' => $attackingArmy, 'after' => $attackingAfter),
+        'defending'      => array('before' => $defendingArmy, 'after' => $defendingAfter),
+    );
+}
+
+// ============================================================
+// SAQUEO: calculateLoot()
+// ============================================================
+
+/**
+ * Calcula los recursos que saquean las tropas atacantes supervivientes.
+ *
+ * LÓGICA:
+ *   1. Calcular capacidad total de carga de las tropas supervivientes
+ *   2. Restar recursos protegidos por el escondite (building_hide)
+ *      - Fórmula: nivel_escondite * 50 unidades protegidas por recurso
+ *      - Nivel 10 → 500 de cada recurso protegido
+ *   3. Distribuir la carga proporcionalmente entre madera, piedra, hierro
+ *
+ * @param array $survivingArmy  Tropas supervivientes del atacante
+ * @param array $village        Datos de la aldea defensora (res_wood, res_stone, res_iron, building_hide)
+ *
+ * @return array
+ *   - wood, stone, iron  cantidad de cada recurso saqueado
+ *   - capacity           capacidad total de carga del ejército
+ *   - used               recursos totales saqueados
+ */
+function calculateLoot($survivingArmy, $village) {
+    $unitStats = getUnitStats();
+
+    // Calcular capacidad total de carga
+    $totalCapacity = 0;
+    foreach ($unitStats as $unit => $stats) {
+        $count = isset($survivingArmy[$unit]) ? max(0, (int)$survivingArmy[$unit]) : 0;
+        $totalCapacity += $count * $stats['haul'];
+    }
+
+    if ($totalCapacity <= 0) {
+        return array('wood' => 0, 'stone' => 0, 'iron' => 0, 'capacity' => 0, 'used' => 0);
+    }
+
+    // Recursos disponibles en la aldea
+    $wood  = max(0.0, (float)(isset($village['res_wood'])  ? $village['res_wood']  : 0));
+    $stone = max(0.0, (float)(isset($village['res_stone']) ? $village['res_stone'] : 0));
+    $iron  = max(0.0, (float)(isset($village['res_iron'])  ? $village['res_iron']  : 0));
+
+    // Protección del escondite: nivel * 50 unidades por recurso
+    $hideLevel        = max(0, (int)(isset($village['building_hide']) ? $village['building_hide'] : 0));
+    $hiddenPerRes     = $hideLevel * 50;
+
+    $availableWood  = max(0.0, $wood  - $hiddenPerRes);
+    $availableStone = max(0.0, $stone - $hiddenPerRes);
+    $availableIron  = max(0.0, $iron  - $hiddenPerRes);
+
+    $totalAvailable = $availableWood + $availableStone + $availableIron;
+
+    if ($totalAvailable <= 0) {
+        return array('wood' => 0, 'stone' => 0, 'iron' => 0,
+                     'capacity' => $totalCapacity, 'used' => 0);
+    }
+
+    // Distribuir proporcionalmente
+    if ($totalAvailable <= $totalCapacity) {
+        // Llevamos todo lo que hay disponible
+        $lootWood  = (int)floor($availableWood);
+        $lootStone = (int)floor($availableStone);
+        $lootIron  = (int)floor($availableIron);
+    } else {
+        // Solo alcanza para una fracción → distribuir proporcionalmente
+        $ratio     = $totalCapacity / $totalAvailable;
+        $lootWood  = (int)floor($availableWood  * $ratio);
+        $lootStone = (int)floor($availableStone * $ratio);
+        $lootIron  = (int)floor($availableIron  * $ratio);
+    }
+
+    $lootUsed = $lootWood + $lootStone + $lootIron;
+
+    return array(
+        'wood'     => $lootWood,
+        'stone'    => $lootStone,
+        'iron'     => $lootIron,
+        'capacity' => $totalCapacity,
+        'used'     => $lootUsed,
+    );
+}
+
+// ============================================================
 // HANDLERS DE EVENTOS
 // ============================================================
 
 /**
  * Procesa un evento de construcción.
- * Reconstruido desde zim_Twlan_Model_World_Event_Build_handle
  */
 function handleBuildEvent($db, $event) {
     try {
@@ -83,7 +344,6 @@ function handleBuildEvent($db, $event) {
 
 /**
  * Procesa un evento de entrenamiento.
- * Reconstruido desde zim_Twlan_Model_World_Event_Train_handle
  */
 function handleTrainEvent($db, $event) {
     try {
@@ -92,7 +352,6 @@ function handleTrainEvent($db, $event) {
         $unit   = $event['unit'];
         $amount = (int)$event['amount'];
 
-        // Agregar unidades al ejército de la aldea
         $stmt = $db->prepare("
             SELECT id_army FROM world_unit
             WHERE id_village_from = ? AND id_village_to = ?
@@ -123,7 +382,6 @@ function handleTrainEvent($db, $event) {
 
 /**
  * Procesa un evento de investigación.
- * Reconstruido desde zim_Twlan_Model_World_Event_Research_handle
  */
 function handleResearchEvent($db, $event) {
     try {
@@ -158,42 +416,169 @@ function handleResearchEvent($db, $event) {
 
 /**
  * Procesa un evento de ejército.
- * Reconstruido desde zim_Twlan_Model_World_Event_Army_handle
+ *
+ * movement_type:
+ *   0 = Ataque   → ejecuta combate real, crea retorno con supervivientes
+ *   2 = Apoyo    → agrega tropas a aldea destino
+ *   3 = Retorno  → devuelve tropas a aldea origen + entrega saqueo
+ *   4 = Espionaje → crea evento de retorno (sin combate)
  */
 function handleArmyEvent($db, $event) {
     try {
         $db->beginTransaction();
-
+		
+		$eventType    = (int)$event['event_type'];
         $movementType = (int)$event['movement_type'];
         $fromVillage  = (int)$event['id_village_from'];
         $toVillage    = (int)$event['id_village_to'];
-        
-        // Decodificar el campo data si existe
+
         $eventData = !empty($event['data']) ? json_decode($event['data'], true) : array();
+        $units     = getUnitList();
 
         switch ($movementType) {
-            case 0: // Ataque - crear evento de retorno
-                handleReturn($db, $event, $eventData);
+	
+	
+            // ----------------------------------------
+            case 0: // ATAQUE — Combate real
+            // ----------------------------------------
+
+                // 1. Cargar tropas defensoras de la aldea destino
+                $stmtDef = $db->prepare("
+                    SELECT * FROM world_unit
+                    WHERE id_village_from = ? AND id_village_to = ?
+                ");
+                $stmtDef->execute(array($toVillage, $toVillage));
+                $defenderRow = $stmtDef->fetch(PDO::FETCH_ASSOC);
+
+                // 2. Cargar datos de la aldea defensora (muro, escondite, recursos)
+                $stmtVil = $db->prepare("SELECT * FROM world_village WHERE id_village = ?");
+                $stmtVil->execute(array($toVillage));
+                $defenderVillage = $stmtVil->fetch(PDO::FETCH_ASSOC);
+
+                // 3. Armar arrays de ejércitos
+                $attackingArmy = array();
+                $defendingArmy = array();
+                foreach ($units as $unit) {
+                    $attackingArmy[$unit] = isset($event['unit_' . $unit])
+                        ? (int)$event['unit_' . $unit] : 0;
+                    $defendingArmy[$unit] = ($defenderRow && isset($defenderRow['unit_' . $unit]))
+                        ? (int)$defenderRow['unit_' . $unit] : 0;
+                }
+
+                $wallLevel = $defenderVillage ? (int)(isset($defenderVillage['building_wall']) ? $defenderVillage['building_wall'] : 0) : 0;
+
+                // 4. ¡Ejecutar combate!
+                $fightResult = dofight($attackingArmy, $defendingArmy, $wallLevel);
+
+                // 5. Actualizar tropas defensoras supervivientes en world_unit
+                if ($defenderRow) {
+                    $sets   = array();
+                    $params = array();
+                    foreach ($units as $unit) {
+                        $sets[]   = "`unit_{$unit}` = ?";
+                        $params[] = $fightResult['defending']['after'][$unit];
+                    }
+                    $params[] = $defenderRow['id_army'];
+                    $db->prepare("UPDATE world_unit SET " . implode(', ', $sets) . " WHERE id_army = ?")
+                       ->execute($params);
+                }
+if ($eventType == 3) {
+    $movementType = 3; // forzamos el case de retorno
+			}
+                // 6. Calcular y aplicar saqueo si el atacante ganó
+                $lootData = array();
+                if ($fightResult['attacker_wins'] && $defenderVillage) {
+                    $loot = calculateLoot($fightResult['attacking']['after'], $defenderVillage);
+
+                    if ($loot['used'] > 0) {
+                        // Restar recursos de la aldea defensora
+                        $db->prepare("
+                            UPDATE world_village
+                            SET res_wood  = GREATEST(0, res_wood  - ?),
+                                res_stone = GREATEST(0, res_stone - ?),
+                                res_iron  = GREATEST(0, res_iron  - ?)
+                            WHERE id_village = ?
+                        ")->execute(array(
+                            $loot['wood'],
+                            $loot['stone'],
+                            $loot['iron'],
+                            $toVillage
+                        ));
+
+                        $lootData = array(
+                            'wood'     => $loot['wood'],
+                            'stone'    => $loot['stone'],
+                            'iron'     => $loot['iron'],
+                            'capacity' => $loot['capacity'],
+                            'used'     => $loot['used'],
+                        );
+
+                        echo "[LOOT] Aldea {$fromVillage} saquea {$toVillage}: " .
+                             "madera={$loot['wood']} piedra={$loot['stone']} hierro={$loot['iron']}\n";
+                    }
+                }
+
+                // 7. Log del resultado del combate
+                $winner   = $fightResult['attacker_wins'] ? "ATACANTE GANA" : "DEFENSOR GANA";
+                $luckPct  = round($fightResult['luck'] * 100, 1);
+                $atkPow   = round($fightResult['attack_power']);
+                $defPow   = round($fightResult['defense_power']);
+                echo "[FIGHT] {$fromVillage} → {$toVillage}: ATK={$atkPow} vs DEF={$defPow} " .
+                     "[{$winner}] (suerte: {$luckPct}%, muro: nivel {$wallLevel})\n";
+
+                // 8. Armar eventData del retorno (saqueo + info del combate)
+                $returnData = array();
+                if (!empty($lootData)) {
+                    $returnData['loot'] = $lootData;
+                }
+                $returnData['fight'] = array(
+                    'attacker_wins' => $fightResult['attacker_wins'],
+                    'luck'          => $fightResult['luck'],
+                    'wall_level'    => $wallLevel,
+                );
+
+                // 9. Crear evento de retorno con tropas SUPERVIVIENTES (no las originales)
+                handleReturn($db, $event, $returnData, $fightResult['attacking']['after']);
                 break;
-            
-            case 2: // Apoyo - agregar tropas a aldea destino
+
+            // ----------------------------------------
+            case 2: // APOYO — Agregar tropas a aldea destino
+            // ----------------------------------------
                 addUnitsToVillage($db, $event, $toVillage);
                 break;
-            
-            case 3: // Retorno - devolver tropas supervivientes a aldea origen
+
+            // ----------------------------------------
+            case 3: // RETORNO — Devolver tropas y saqueo a aldea origen
+            // ----------------------------------------
                 addUnitsToVillage($db, $event, $fromVillage);
-                
-                // Si hay info de saqueo en data, mostrarla
-                if (isset($eventData['loot'])) {
+
+                // Entregar recursos saqueados a la aldea de origen
+                if (!empty($eventData['loot'])) {
                     $loot = $eventData['loot'];
-                    echo "[RETURN] Aldea {$fromVillage}: Recursos saqueados: {$loot['used']}/{$loot['max']}\n";
+                    $db->prepare("
+                        UPDATE world_village
+                        SET res_wood  = res_wood  + ?,
+                            res_stone = res_stone + ?,
+                            res_iron  = res_iron  + ?
+                        WHERE id_village = ?
+                    ")->execute(array(
+                        (int)(isset($loot['wood'])  ? $loot['wood']  : 0),
+                        (int)(isset($loot['stone']) ? $loot['stone'] : 0),
+                        (int)(isset($loot['iron'])  ? $loot['iron']  : 0),
+                        $fromVillage
+                    ));
+
+                    echo "[RETURN] Aldea {$fromVillage}: Recursos recibidos: " .
+                         "madera={$loot['wood']} piedra={$loot['stone']} hierro={$loot['iron']}\n";
                 }
                 break;
-            
-            case 4: // Espionaje - crear evento de retorno
+
+            // ----------------------------------------
+            case 4: // ESPIONAJE — Crear evento de retorno sin combate
+            // ----------------------------------------
                 handleReturn($db, $event, $eventData);
                 break;
-            
+
             default:
                 echo "[WARN] Tipo de movimiento desconocido: {$movementType}\n";
         }
@@ -211,22 +596,20 @@ function handleArmyEvent($db, $event) {
 
 /**
  * Agrega unidades de un evento a una aldea en world_unit.
- * 
- * Las tropas están en los campos unit_spear, unit_sword, etc. del evento.
+ *
+ * Usado por: apoyo (case 2) y retorno (case 3).
+ * Las tropas están en los campos unit_spear, unit_sword, etc. del $event.
  */
 function addUnitsToVillage($db, $event, $idVillage) {
-    $units = array('spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 
-                   'heavy', 'ram', 'catapult', 'knight', 'snob');
+    $units = getUnitList();
 
-    // Buscar si ya existe un ejército en esa aldea
     $stmt = $db->prepare("
-        SELECT id_army FROM world_unit 
+        SELECT id_army FROM world_unit
         WHERE id_village_from = ? AND id_village_to = ?
     ");
     $stmt->execute(array($idVillage, $idVillage));
     $army = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    // Contar tropas totales a devolver
     $totalUnits = 0;
     foreach ($units as $unit) {
         $field = 'unit_' . $unit;
@@ -239,99 +622,89 @@ function addUnitsToVillage($db, $event, $idVillage) {
     }
 
     if ($army) {
-        // Actualizar ejército existente
-        $sets = array();
+        $sets   = array();
         $params = array();
-        
         foreach ($units as $unit) {
-            $field = 'unit_' . $unit;
+            $field  = 'unit_' . $unit;
             $amount = isset($event[$field]) ? (int)$event[$field] : 0;
-            
             if ($amount > 0) {
-                $sets[] = "`{$field}` = `{$field}` + ?";
+                $sets[]   = "`{$field}` = `{$field}` + ?";
                 $params[] = $amount;
             }
         }
-        
         if (!empty($sets)) {
             $params[] = $army['id_army'];
             $db->prepare("UPDATE world_unit SET " . implode(', ', $sets) . " WHERE id_army = ?")
                ->execute($params);
         }
-        
         echo "[RETURN] Aldea {$idVillage}: +{$totalUnits} tropas (actualizado)\n";
-        
     } else {
-        // Crear nuevo registro de ejército
         $cols = array('id_village_from', 'id_village_to');
         $vals = array($idVillage, $idVillage);
-        
         foreach ($units as $unit) {
-            $field = 'unit_' . $unit;
+            $field  = 'unit_' . $unit;
             $cols[] = $field;
             $vals[] = isset($event[$field]) ? (int)$event[$field] : 0;
         }
-        
         $placeholders = implode(', ', array_fill(0, count($vals), '?'));
-        $colStr = '`' . implode('`, `', $cols) . '`';
-        
+        $colStr       = '`' . implode('`, `', $cols) . '`';
         $db->prepare("INSERT INTO world_unit ({$colStr}) VALUES ({$placeholders})")
            ->execute($vals);
-        
         echo "[RETURN] Aldea {$idVillage}: +{$totalUnits} tropas (nuevo ejército)\n";
     }
 }
 
 /**
  * Crea evento de retorno para tropas atacantes.
- * 
- * El evento original contiene las tropas que SALIERON.
- * El juego debe crear un nuevo evento con las tropas SUPERVIVIENTES después del combate.
- * 
- * NOTA: Esta función crea el evento de retorno con las tropas del evento original.
- * La lógica completa de combate requeriría llamar a dofight() y usar attackingArmy.after
+ *
+ * @param PDO   $db            Conexión a base de datos
+ * @param array $event         Evento original (contiene id_village_from, start, finish)
+ * @param array $eventData     Datos adicionales: loot, fight info (se guarda en campo 'data')
+ * @param array $survivorTroops  Tropas supervivientes reales del combate.
+ *                               Si es null, usa las tropas del evento original (fallback).
  */
-function handleReturn($db, $event, $eventData = array()) {
-    $now = microtime(true);
-    $duration = $event['finish'] - $event['start'];
+function handleReturn($db, $event, $eventData = array(), $survivorTroops = null) {
+    $now        = microtime(true);
+    $duration   = $event['finish'] - $event['start'];
     $returnTime = $now + $duration;
 
-    // Crear evento base de retorno
+    // Crear evento base
     $stmt = $db->prepare("
-        INSERT INTO world_event (event_type, finish, start, id_village_to)
-        VALUES (3, ?, ?, ?)
+        INSERT INTO world_event (event_type, finish, start)
+        VALUES (3, ?, ?)
     ");
     $stmt->execute(array($returnTime, $now, $event['id_village_from']));
-    
     $newEventId = $db->lastInsertId();
 
-    // Crear evento de ejército con las tropas
-    $units = array('spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher',
-                   'heavy', 'ram', 'catapult', 'knight', 'snob');
-    
-    $cols = array('id_event', 'id_village_from', 'id_village_to', 'movement_type');
-    $vals = array($newEventId, $event['id_village_from'], $event['id_village_from'], 3);
-    
+    // Armar INSERT de world_event_army con tropas supervivientes
+    $units = getUnitList();
+    $cols = array('id_event', 'id_village_from', 'movement_type');
+    $vals = array($newEventId, $event['id_village_from'], 0);
+
     foreach ($units as $unit) {
-        $field = 'unit_' . $unit;
+        $field  = 'unit_' . $unit;
         $cols[] = $field;
-        // IMPORTANTE: Aquí deberían ir las tropas supervivientes del combate
-        // Por ahora, copiamos las tropas del evento original
-        $vals[] = isset($event[$field]) ? (int)$event[$field] : 0;
+
+        if ($survivorTroops !== null) {
+            // Tropas reales post-combate
+            $vals[] = isset($survivorTroops[$unit]) ? (int)$survivorTroops[$unit] : 0;
+        } else {
+            // Fallback: tropas originales del evento (p.ej. espionaje)
+            $vals[] = isset($event[$field]) ? (int)$event[$field] : 0;
+        }
     }
-    
-    // Si hay datos de combate/saqueo, guardarlos en el campo data
+
     $cols[] = 'data';
     $vals[] = !empty($eventData) ? json_encode($eventData) : null;
-    
+
     $placeholders = implode(', ', array_fill(0, count($vals), '?'));
-    $colStr = '`' . implode('`, `', $cols) . '`';
-    
-    $stmt = $db->prepare("INSERT INTO world_event_army ({$colStr}) VALUES ({$placeholders})");
-    $stmt->execute($vals);
-    
+    $colStr       = '`' . implode('`, `', $cols) . '`';
+
+    $db->prepare("INSERT INTO world_event_army ({$colStr}) VALUES ({$placeholders})")
+       ->execute($vals);
+
     $finishDate = date('Y-m-d H:i:s', (int)$returnTime);
-    echo "[ATTACK] Creado evento de retorno #{$newEventId} → Aldea {$event['id_village_from']} (arriba: {$finishDate})\n";
+    echo "[ARMY] Evento de retorno #{$newEventId} creado → Aldea {$event['id_village_from']} (llega: {$finishDate})\n";
 }
 
 /**
@@ -400,7 +773,6 @@ function handleEvents($db) {
 
 // ============================================================
 // UPDATE RANKS
-// Reconstruido desde zim_TWLan_EventSystem_updateRanks
 // ============================================================
 
 function updateRanks($db) {
@@ -428,6 +800,14 @@ function updateRanks($db) {
 // LOOP PRINCIPAL
 // ============================================================
 
+// En handleEvents(), antes de procesar:
+$lock = $db->query("SELECT GET_LOCK('twlan_eventsystem', 0)")->fetchColumn();
+if (!$lock) return; // El original ya está procesando, saltamos este tick
+
+// ... todo el procesamiento normal ...
+
+$db->query("SELECT RELEASE_LOCK('twlan_eventsystem')");
+
 $tick = 0;
 
 while (true) {
@@ -442,7 +822,6 @@ while (true) {
         }
     } catch (Exception $e) {
         echo "[ERROR] Loop: " . $e->getMessage() . "\n";
-        // Reconectar si se perdió la conexión
         try {
             \TWLan\ORM\Lemon::disconnect();
             $db = \TWLan\ORM\Lemon::db();
