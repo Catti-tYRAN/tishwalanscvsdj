@@ -1,0 +1,93 @@
+
+void zim_TWLan_TWLan_isEventSystem
+               (undefined8 param_1,double param_2,double param_3,double param_4,undefined8 param_5,
+               undefined8 param_6,undefined8 param_7,undefined8 param_8,undefined8 param_9,
+               undefined8 *param_10,long *param_11)
+
+{
+  uint uVar1;
+  ulong uVar2;
+  undefined8 *puVar3;
+  undefined8 uVar4;
+  undefined8 extraout_RDX;
+  ulong *puVar5;
+  ulong *puVar6;
+  long in_FS_OFFSET;
+  double dVar7;
+  undefined8 extraout_XMM0_Qa;
+  char ***pppcVar8;
+  char **local_48;
+  undefined8 *local_40;
+  char *local_38;
+  undefined4 local_30;
+  undefined4 local_28;
+  undefined1 local_24;
+  undefined1 local_23;
+  long local_20;
+  
+  pppcVar8 = &local_48;
+  local_20 = *(long *)(in_FS_OFFSET + 0x28);
+  dVar7 = (double)zephir_memory_grow_stack
+                            (param_1,param_2,param_3,param_4,param_5,param_6,param_7,param_8);
+  local_28 = 1;
+  local_23 = 0;
+  local_30 = 5;
+  local_38 = "STDIN";
+  local_48 = &local_38;
+  local_24 = 6;
+  local_40 = (undefined8 *)0x0;
+  if (param_11 == (long *)0x0) {
+    uVar2 = zephir_call_func_aparams
+                      (dVar7,param_2,param_3,param_4,(long *)&local_40,"defined",7,(ulong **)0x0,
+                       (ulong **)0x10f,(ulong *)0x1,(double)&local_48);
+    if ((int)uVar2 != -1) {
+      *param_10 = *local_40;
+      param_10[1] = local_40[1];
+      param_10[2] = local_40[2];
+      uVar1 = *(uint *)(local_40 + 2);
+      if (uVar1 < 2) {
+        if ((local_40[3] & 0xfffffffffffffffc) != 0) {
+          gc_remove_zval_from_buffer((long)local_40);
+        }
+        _efree(local_40);
+      }
+      else {
+        if (3 < *(byte *)((long)param_10 + 0x14)) {
+          _zval_copy_ctor_func(param_10);
+          uVar1 = *(uint *)(local_40 + 2);
+        }
+        *(uint *)(local_40 + 2) = uVar1 - 1;
+      }
+      *(undefined4 *)(param_10 + 2) = 1;
+      *(undefined1 *)((long)param_10 + 0x15) = 0;
+    }
+  }
+  else {
+    dVar7 = (double)_zval_ptr_dtor(param_11);
+    uVar4 = 0;
+    *param_11 = 0;
+    puVar6 = (ulong *)0x1;
+    puVar5 = (ulong *)0x10f;
+    uVar2 = zephir_call_func_aparams
+                      (dVar7,param_2,param_3,param_4,param_11,"defined",7,(ulong **)0x0,
+                       (ulong **)0x10f,(ulong *)0x1,(double)&local_48);
+    if (((int)uVar2 == -1) && (DAT_010b9138 != 0)) {
+      puVar3 = (undefined8 *)
+               _emalloc(extraout_XMM0_Qa,param_2,param_3,param_4,param_5,param_6,param_7,param_8,
+                        (ulong *)0x20,pppcVar8,extraout_RDX,uVar4,puVar5,puVar6);
+      *param_11 = (long)puVar3;
+      puVar3[3] = 0;
+      *puVar3 = zval_used_for_init;
+      uVar4 = DAT_010b9630;
+      puVar3[1] = DAT_010b9628;
+      puVar3[2] = uVar4;
+    }
+  }
+  zephir_memory_restore_stack();
+  if (local_20 == *(long *)(in_FS_OFFSET + 0x28)) {
+    return;
+  }
+                    /* WARNING: Subroutine does not return */
+  __stack_chk_fail();
+}
+
